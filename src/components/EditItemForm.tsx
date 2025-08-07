@@ -1,0 +1,298 @@
+'use client'
+
+import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import {
+  ArrowLeft,
+  Save,
+  X,
+  Loader
+} from 'lucide-react'
+
+interface FormField {
+  name: string
+  label: string
+  type: 'text' | 'textarea' | 'select' | 'date' | 'number' | 'email' | 'tel' | 'checkbox'
+  required?: boolean
+  options?: { value: string; label: string }[]
+  placeholder?: string
+  rows?: number
+}
+
+interface EditItemFormProps {
+  title: string
+  tableName: string
+  itemId: string
+  organizationId: string
+  fields: FormField[]
+  redirectPath: string
+  onCancel?: () => void
+}
+
+export default function EditItemForm({
+  title,
+  tableName,
+  itemId,
+  organizationId,
+  fields,
+  redirectPath,
+  onCancel
+}: EditItemFormProps) {
+  const router = useRouter()
+  const [formData, setFormData] = useState<Record<string, any>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchItem()
+  }, [itemId])
+
+  const fetchItem = async () => {
+    try {
+      setLoading(true)
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('id', itemId)
+        .single()
+
+      if (error) throw error
+      setFormData(data || {})
+    } catch (error) {
+      console.error('Error fetching item:', error)
+      setError('Failed to load item data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleInputChange = (name: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    try {
+      setSaving(true)
+      setError(null)
+
+      // Validate required fields
+      const missingFields = fields
+        .filter(field => field.required && !formData[field.name])
+        .map(field => field.label)
+
+      if (missingFields.length > 0) {
+        setError(`Please fill in required fields: ${missingFields.join(', ')}`)
+        return
+      }
+
+      // Remove readonly fields
+      const { id, created_at, updated_at, ...updateData } = formData
+
+      console.log('Attempting to update table:', tableName, 'item:', itemId, 'with data:', updateData)
+
+      const { data, error: updateError } = await supabase
+        .from(tableName)
+        .update(updateData)
+        .eq('id', itemId)
+        .select()
+
+      if (updateError) {
+        console.error('Supabase update error:', updateError)
+        throw updateError
+      }
+
+      console.log('Successfully updated item:', data)
+
+      // Redirect back to the list page
+      router.push(redirectPath)
+    } catch (error: any) {
+      console.error('Error updating item:', {
+        error,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code,
+        tableName,
+        itemId,
+        formData
+      })
+
+      // Provide more specific error messages
+      let errorMessage = 'Failed to update item. Please try again.'
+
+      if (error?.message) {
+        if (error.message.includes('relation') && error.message.includes('does not exist')) {
+          errorMessage = `Database table "${tableName}" does not exist. Please contact support.`
+        } else if (error.message.includes('duplicate key')) {
+          errorMessage = 'An item with this information already exists.'
+        } else if (error.message.includes('violates check constraint')) {
+          errorMessage = 'Invalid data provided. Please check your input.'
+        } else if (error.message.includes('violates foreign key constraint')) {
+          errorMessage = 'Invalid reference data. Please check your selections.'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+
+      setError(errorMessage)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCancel = () => {
+    if (onCancel) {
+      onCancel()
+    } else {
+      router.push(redirectPath)
+    }
+  }
+
+  const renderField = (field: FormField) => {
+    const commonProps = {
+      id: field.name,
+      name: field.name,
+      required: field.required,
+      className: "w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500",
+      placeholder: field.placeholder
+    }
+
+    switch (field.type) {
+      case 'textarea':
+        return (
+          <textarea
+            {...commonProps}
+            rows={field.rows || 4}
+            value={formData[field.name] || ''}
+            onChange={(e) => handleInputChange(field.name, e.target.value)}
+          />
+        )
+
+      case 'select':
+        return (
+          <select
+            {...commonProps}
+            value={formData[field.name] || ''}
+            onChange={(e) => handleInputChange(field.name, e.target.value)}
+          >
+            <option value="">Select {field.label}</option>
+            {field.options?.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        )
+
+      case 'checkbox':
+        return (
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id={field.name}
+              name={field.name}
+              checked={formData[field.name] || false}
+              onChange={(e) => handleInputChange(field.name, e.target.checked)}
+              className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+            />
+            <label htmlFor={field.name} className="ml-2 text-sm text-gray-300">
+              {field.label}
+            </label>
+          </div>
+        )
+
+      default:
+        return (
+          <input
+            {...commonProps}
+            type={field.type}
+            value={formData[field.name] || ''}
+            onChange={(e) => handleInputChange(field.name, e.target.value)}
+          />
+        )
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white">
+        <div className="p-6">
+          <div className="flex items-center justify-center h-64">
+            <div className="flex items-center space-x-2 text-gray-400">
+              <Loader className="w-5 h-5 animate-spin" />
+              <span>Loading...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white">
+      <div className="p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={handleCancel}
+              className="flex items-center space-x-2 text-gray-400 hover:text-white"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span>Back</span>
+            </button>
+            <h1 className="text-2xl font-semibold">{title}</h1>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleCancel}
+              className="flex items-center space-x-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
+            >
+              <X className="w-4 h-4" />
+              <span>Cancel</span>
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={saving}
+              className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 px-4 py-2 rounded text-sm"
+            >
+              <Save className="w-4 h-4" />
+              <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
+            <p className="text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Form */}
+        <div className="bg-gray-800 rounded-lg p-6">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {fields.map((field) => (
+                <div key={field.name} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
+                  <label htmlFor={field.name} className="block text-sm font-medium text-gray-300 mb-2">
+                    {field.label}
+                    {field.required && <span className="text-red-400 ml-1">*</span>}
+                  </label>
+                  {renderField(field)}
+                </div>
+              ))}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
