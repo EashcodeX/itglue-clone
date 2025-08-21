@@ -3,7 +3,7 @@ const nextConfig = {
   // Vercel-optimized configuration
   compress: true,
   poweredByHeader: false,
-  output: 'export',
+  output: 'standalone',
   images: {
     unoptimized: true,
   },
